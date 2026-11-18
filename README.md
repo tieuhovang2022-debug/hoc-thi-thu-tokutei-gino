@@ -1,4 +1,4 @@
-# Học & Thi Thử Tokutei Gino — Dương Ashita
+# Học & Thi Thử Tokutei Gino — Dương Giàn Giáo
 
 Web học và thi thử Tokutei Gino (Kỹ năng đặc định) cho người Việt tại Nhật, đủ 3 ngành × Gino 1 & Gino 2, đúng format đề thi chính thức (OTAFF / JAC):
 
