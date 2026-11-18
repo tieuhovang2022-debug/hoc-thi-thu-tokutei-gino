@@ -44,13 +44,77 @@
 
     function $(id){ return document.getElementById(id); }
     function show(name){
-      var screens = ["home","sector","sub","soon","donate","level","lectures","lecture","exams","exam"];
+      var screens = ["home","sector","sub","soon","donate","level","lectures","lecture","exams","exam","admin-login","admin"];
       for (var i=0;i<screens.length;i++){ $("screen-"+screens[i]).classList.toggle("active", screens[i]===name); }
       state.screen = name;
       var fb = $("fixed-back");
       if (name==="home"){ fb.classList.add("is-hidden"); document.body.classList.remove("has-fixed-back"); }
       else { fb.classList.remove("is-hidden"); document.body.classList.add("has-fixed-back"); }
       window.scrollTo(0,0);
+      trackScreen(name);
+    }
+
+    /* ---------- Thống kê truy cập (GoatCounter) ---------- */
+    /* Bộ đếm nạp bất đồng bộ bằng thẻ script riêng (data-goatcounter-settings
+       no_onload=true) nên trang tự gọi count() cho từng màn hình bằng đường
+       dẫn ảo dễ đọc. Lỗi thống kê không bao giờ được ảnh hưởng việc học. */
+    var GC_PENDING = [];
+    function trackView(path, title){
+      try {
+        var item = { path: path, title: title || "" };
+        if (window.goatcounter && window.goatcounter.count){
+          window.goatcounter.count(item);
+        } else {
+          GC_PENDING.push(item);
+          if (GC_PENDING.length === 1){
+            var iv = setInterval(function(){
+              if (window.goatcounter && window.goatcounter.count){
+                clearInterval(iv);
+                while (GC_PENDING.length){
+                  try { window.goatcounter.count(GC_PENDING.shift()); } catch (e) {}
+                }
+              }
+            }, 300);
+            setTimeout(function(){ clearInterval(iv); }, 6000);
+          }
+        }
+      } catch (e) {}
+    }
+    var SECTOR_SLUGS = { food: "thuc-pham", restaurant: "nha-hang", construction: "xay-dung" };
+    var SECTOR_TITLES = { food: "Ngành Thực Phẩm", restaurant: "Ngành Nhà Hàng", construction: "Ngành Xây Dựng" };
+    var SUB_SLUGS = { doboku: "tho-moc", kenchiku: "kien-truc", lifeline: "ha-tang-thiet-bi" };
+    var SUB_TITLES = { doboku: "Thổ mộc", kenchiku: "Kiến trúc", lifeline: "Hạ tầng – Thiết bị" };
+    function sectorBase(){
+      var p = "/tokutei/" + (SECTOR_SLUGS[state.sector] || "");
+      if (state.sector === "construction" && state.sub) p += "/" + SUB_SLUGS[state.sub];
+      return p;
+    }
+    function sectorTitle(){
+      var t = SECTOR_TITLES[state.sector] || "";
+      if (state.sector === "construction" && state.sub) t += " · " + SUB_TITLES[state.sub];
+      return t;
+    }
+    function trackScreen(name){
+      if (name === "admin-login" || name === "admin") return;
+      var path = null, title = "";
+      var lv = state.level === "g2" ? "gino-2" : "gino-1";
+      var lvT = state.level === "g2" ? "Gino 2" : "Gino 1";
+      if (name === "home"){ path = "/tokutei/trang-chu"; title = "Tokutei · Trang chủ"; }
+      else if (name === "sub"){ path = "/tokutei/xay-dung"; title = "Tokutei · Ngành Xây Dựng"; }
+      else if (name === "sector" && state.sector){ path = sectorBase(); title = "Tokutei · " + sectorTitle(); }
+      else if (name === "soon" && state.sector){ path = sectorBase(); title = "Tokutei · " + sectorTitle(); }
+      else if (name === "level" && state.sector){ path = sectorBase() + "/" + lv; title = "Tokutei · " + sectorTitle() + " · " + lvT; }
+      else if (name === "lectures" && state.sector){ path = sectorBase() + "/" + lv + "/bai-giang"; title = "Tokutei · " + sectorTitle() + " · " + lvT + " · Bài giảng"; }
+      else if (name === "lecture" && state.sector && state.lecture){
+        var arr = LECS(), n = 1;
+        for (var i = 0; i < arr.length; i++){ if (arr[i] === state.lecture){ n = i + 1; break; } }
+        path = sectorBase() + "/" + lv + "/bai-giang/" + n;
+        title = "Tokutei · " + sectorTitle() + " · " + lvT + " · Bài giảng " + n;
+      }
+      else if (name === "exams" && state.sector){ path = sectorBase() + "/" + lv + "/thi-thu"; title = "Tokutei · " + sectorTitle() + " · " + lvT + " · Thi thử"; }
+      else if (name === "exam" && state.sector){ path = sectorBase() + "/" + lv + "/de-" + (state.examIdx + 1); title = "Tokutei · " + sectorTitle() + " · " + lvT + " · Đề " + (state.examIdx + 1); }
+      else if (name === "donate"){ path = "/tokutei/donate"; title = "Tokutei · Donate cho tác giả"; }
+      if (path) trackView(path, title);
     }
     function go(name){ state.stack.push(state.screen); show(name); }
     function goBack(){
@@ -498,6 +562,85 @@
     $("copy-acc-btn").addEventListener("click", copyAccountNumber);
     $("go-donate").addEventListener("click", function(){ go("donate"); });
 
+    /* ---------- Quản trị (khu vực của tác giả) ---------- */
+    /* Cổng khoá nhẹ: chỉ lưu mã băm SHA-256 của mã khoá. Mã ban đầu là 123456;
+       mã mới đặt trong mục Quản trị được lưu ở localStorage (khoá quantri-hash-v1)
+       của chính trình duyệt này và được ưu tiên hơn mã ban đầu. */
+    var ADMIN_BUILTIN_HASH = "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92";
+    function adminHash(text){
+      var enc = new TextEncoder().encode(text);
+      return crypto.subtle.digest("SHA-256", enc).then(function(buf){
+        return Array.prototype.map.call(new Uint8Array(buf), function(b){ return ("0" + b.toString(16)).slice(-2); }).join("");
+      });
+    }
+    function adminExpectedHash(){
+      try { return localStorage.getItem("quantri-hash-v1") || ADMIN_BUILTIN_HASH; }
+      catch (e) { return ADMIN_BUILTIN_HASH; }
+    }
+    function adminUnlocked(){
+      try { return sessionStorage.getItem("quantri-ok") === "1"; } catch (e) { return false; }
+    }
+    function openAdmin(){
+      if (adminUnlocked()){ show("admin"); loadAdminTotal(); }
+      else { go("admin-login"); }
+    }
+    function loadAdminTotal(){
+      var el = $("admin-total");
+      var note = $("admin-total-note");
+      if (!el) return;
+      el.textContent = "…";
+      note.textContent = "Đang tải số liệu từ GoatCounter…";
+      fetch("https://duonggiangiao-tokute.goatcounter.com/counter/TOTAL.json")
+        .then(function(r){ if (!r.ok) throw new Error("http"); return r.json(); })
+        .then(function(d){
+          var n = d ? (d.total != null ? d.total : (d.count != null ? d.count : d.count_unique)) : null;
+          if (n == null) throw new Error("empty");
+          el.textContent = Number(n).toLocaleString("vi-VN");
+          note.textContent = "Tổng lượt xem trang ghi nhận từ khi gắn bộ đếm — bản web này và bản GitHub Pages dùng chung một bộ đếm GoatCounter.";
+        })
+        .catch(function(){
+          el.textContent = "—";
+          note.textContent = "Chưa đọc được số tổng từ GoatCounter. Số này sẽ hiện sau khi bạn bật công khai bộ đếm trong GoatCounter (xem hướng dẫn bên dưới).";
+        });
+    }
+    $("admin-open").addEventListener("click", function(ev){
+      ev.preventDefault();
+      stopTimer();
+      openAdmin();
+    });
+    $("admin-login-btn").addEventListener("click", function(){
+      var err = $("admin-login-err");
+      if (!(window.crypto && crypto.subtle && window.TextEncoder)){
+        err.textContent = "Trình duyệt này không hỗ trợ kiểm tra mã khoá — mời mở trang bằng https rồi thử lại.";
+        return;
+      }
+      adminHash($("admin-code").value || "").then(function(h){
+        if (h === adminExpectedHash()){
+          try { sessionStorage.setItem("quantri-ok", "1"); } catch (e) {}
+          err.textContent = "";
+          $("admin-code").value = "";
+          show("admin");
+          loadAdminTotal();
+        } else {
+          err.textContent = "Mã khoá chưa đúng — mời bạn thử lại.";
+        }
+      });
+    });
+    $("admin-code").addEventListener("keydown", function(ev){
+      if (ev.key === "Enter"){ ev.preventDefault(); $("admin-login-btn").click(); }
+    });
+    $("admin-change-btn").addEventListener("click", function(){
+      var msg = $("admin-change-msg");
+      var n1 = $("admin-new-1").value || "", n2 = $("admin-new-2").value || "";
+      if (n1.length < 4){ msg.textContent = "Mã khoá mới cần ít nhất 4 ký tự."; return; }
+      if (n1 !== n2){ msg.textContent = "Hai ô mã khoá mới chưa khớp nhau."; return; }
+      adminHash(n1).then(function(h){
+        try { localStorage.setItem("quantri-hash-v1", h); } catch (e) {}
+        $("admin-new-1").value = ""; $("admin-new-2").value = "";
+        msg.textContent = "✓ Đã đổi mã khoá (mã mới chỉ lưu trên trình duyệt này).";
+      });
+    });
+
     /* ---------- Điều hướng chung ---------- */
     var backBtns = document.querySelectorAll("[data-back]");
     for (var bb=0; bb<backBtns.length; bb++){ backBtns[bb].addEventListener("click", function(){ goBack(); }); }
@@ -545,3 +688,6 @@
       });
     })();
     
+
+    /* Đếm lượt mở trang chủ ngay khi tải trang */
+    trackScreen("home");
